@@ -37,7 +37,15 @@ class RosPublisher(RosSender):
         RosSender.__init__(self, node_name)
         self.msg = message_class()
         self.pub = rospy.Publisher(topic, message_class, queue_size=queue_size, latch=latch)
+        self._time_lock = threading.Lock()
+        self._latest_time = rospy.Time.now()
+        rospy.Timer(rospy.Duration(0.01), self._update_time_cache)  # 100 Hz
 
+    def _update_time_cache(self, event):
+        now = rospy.Time.now()
+        with self._time_lock:
+            self._latest_time = rospy.Time(now.secs, now.nsecs)
+    
     def send(self, data):
         """
         Takes in serialized message data from source outside of the ROS network,
@@ -50,11 +58,14 @@ class RosPublisher(RosSender):
             None: Explicitly return None so behaviour can be
         """
         self.msg.deserialize(data)
+        with self._time_lock:
+            time = rospy.Time(self._latest_time.secs, self._latest_time.nsecs)
+        
         if self.msg._has_header:
-            self.msg.header.stamp = rospy.Time.now()
+            self.msg.header.stamp = time
         if type(self.msg) == TFMessage:
             for transform in self.msg.transforms:
-                transform.header.stamp = rospy.Time.now()
+                transform.header.stamp = time
         self.pub.publish(self.msg)
 
         return None
